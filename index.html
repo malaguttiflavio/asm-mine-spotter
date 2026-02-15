@@ -417,8 +417,8 @@ kbd { background: var(--bg-card); border: 1px solid var(--border); border-radius
       </div>
     </div>
     <div class="header-right">
-      <div class="stat-badge"><span class="stat-num" id="stat-reviewed">0</span><span class="stat-lbl">Reviewed</span></div>
-      <div class="stat-badge"><span class="stat-num" id="stat-mines">0</span><span class="stat-lbl">Mines</span></div>
+      <div class="stat-badge"><span class="stat-num" id="stat-reviewed">0</span><span class="stat-lbl">Cells Reviewed</span></div>
+      <div class="stat-badge"><span class="stat-num" id="stat-mines">0</span><span class="stat-lbl">Mines Found</span></div>
       <div class="stat-badge"><span class="stat-num" id="stat-cells-with-mines">0</span><span class="stat-lbl">Cells w/ Mines</span></div>
       <button class="icon-btn" onclick="showModal('help-modal')" title="Help">?</button>
       <button class="icon-btn" onclick="showModal('stats-modal'); updateStatsModal()" title="Statistics">📊</button>
@@ -615,16 +615,24 @@ kbd { background: var(--bg-card); border: 1px solid var(--border); border-radius
     <div class="modal-title">How to Use Mine Spotter</div>
     <div style="text-align:left">
       <div class="help-h3">Setup</div>
-      <p class="help-p">1. Enter your name and Google Maps API key on the start screen</p>
-      <p class="help-p">2. The API key is shared — your project lead will provide it</p>
+      <p class="help-p">1. Enter your name on the start screen — each name gets its own separate data store</p>
+      <p class="help-p">2. Enter the Google Maps API key (shared by your project lead)</p>
+      <p class="help-p">3. If you've used the app before, click your name from the existing profiles list to resume</p>
 
       <div class="help-h3">Workflow</div>
-      <p class="help-p">1. Use the <strong>overview map</strong> at the top of the sidebar to see all cells spatially, or use filters to focus on specific cells</p>
-      <p class="help-p">2. Click a cell from the list or overview map to load its satellite view</p>
+      <p class="help-p">1. Use filters in the sidebar to focus on specific counties, score ranges, or unreviewed cells</p>
+      <p class="help-p">2. Click a cell from the list to load its satellite view</p>
       <p class="help-p">3. Examine the imagery for signs of artisanal mining</p>
-      <p class="help-p">4. <strong>Click on the map</strong> to place a mine marker wherever you see one</p>
-      <p class="help-p">7. Click <strong>Save</strong> to commit labels, or <strong>No Mines</strong> to mark as reviewed</p>
-      <p class="help-p">8. Use <strong>⏭ Next Unreviewed</strong> or arrow keys to move on</p>
+      <p class="help-p">4. <strong>Click on the map</strong> to place a mine marker — a popup will appear</p>
+      <p class="help-p">5. Select your <strong>confidence level</strong> (1=Low, 2=Medium, 3=High)</p>
+      <p class="help-p">6. Add a <strong>note</strong> describing what you see, or click N/A to skip</p>
+      <p class="help-p">7. Click <strong>💾 Save</strong> to commit labels, or <strong>✓ No Mines</strong> if the cell is clear</p>
+      <p class="help-p">8. Navigate to the next cell using <strong>⏭ Next Unreviewed</strong>, the ← → list buttons, or the <strong>▲▼◀▶ spatial arrows</strong> on the map to move to an adjacent tile</p>
+      <p class="help-p">9. If you navigate away with unsaved labels, the app will prompt you to save them automatically</p>
+
+      <div class="help-h3">Labeling Mines Outside the Current Cell</div>
+      <p class="help-p">If you zoom out and spot a mine in a neighboring tile, you can click it directly — the app will automatically assign the label to the correct cell. A notice will confirm which cell received the label.</p>
+      <p class="help-p">You can also use the ▲▼◀▶ arrows on the map edges to navigate spatially to that adjacent tile.</p>
 
       <div class="help-h3">What to Look For</div>
       <p class="help-p">• Irregular pits or excavations in vegetated areas</p>
@@ -634,13 +642,14 @@ kbd { background: var(--bg-card); border: 1px solid var(--border); border-radius
       <p class="help-p">• Water-filled abandoned pits</p>
 
       <div class="help-h3">Keyboard Shortcuts</div>
-      <p class="help-p"><kbd>←</kbd> / <kbd>→</kbd> — Previous / Next cell</p>
+      <p class="help-p"><kbd>←</kbd> / <kbd>→</kbd> — Previous / Next cell (in list order)</p>
       <p class="help-p"><kbd>S</kbd> — Save labels</p>
       <p class="help-p"><kbd>Z</kbd> — Undo last label</p>
       <p class="help-p"><kbd>R</kbd> — Mark reviewed (no mines)</p>
 
       <div class="help-h3">Data Management</div>
-      <p class="help-p">Labels are saved in your browser's local storage. Use 💾 to export CSV (for analysis) or JSON (for backup/sharing). Import another RA's JSON to merge their work into yours.</p>
+      <p class="help-p">Each RA name has its own data store in the browser. Multiple people can work independently on the same computer by using different names.</p>
+      <p class="help-p">Exports (CSV and JSON) include data from <strong>all profiles</strong> on the computer, not just the currently logged-in user.</p>
       <p class="help-p"><strong>Important:</strong> Export your data regularly! Browser storage can be lost if you clear browser data.</p>
     </div>
     <button class="modal-close" onclick="hideModal('help-modal')">Close</button>
@@ -1155,8 +1164,24 @@ function clearCellLabels() {
 
 // ── UNSAVED CHANGES CHECK ──
 function checkUnsavedLabels() {
+  // If there's a pending click waiting for confidence, cancel it
+  if (pendingClickMarker) {
+    pendingClickMarker.setMap(null);
+    pendingClickMarker = null;
+    pendingClickLatLng = null;
+    pendingConfidence = null;
+    hideConfidencePopup();
+  }
+
   if (pendingLabels.length > 0) {
-    return confirm('You have ' + pendingLabels.length + ' unsaved label(s). Discard and move on?');
+    var choice = confirm('You have ' + pendingLabels.length + ' unsaved label(s).\n\nOK = Save them and move on\nCancel = Stay on this cell');
+    if (choice) {
+      // Auto-save before navigating
+      saveLabels();
+      return true;
+    } else {
+      return false;
+    }
   }
   return true;
 }
